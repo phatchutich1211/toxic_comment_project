@@ -16,9 +16,9 @@ DATA_DIR = BASE_DIR / "data"
 MODELS_DIR = BASE_DIR / "models"
 REPORTS_DIR = BASE_DIR / "reports"
 
-PROJECT_TITLE = "Hệ thống lọc bình luận độc hại và quảng cáo rác cho Fanpage lớn"
-STUDENT_NAME = "Điền họ tên của bạn"
-STUDENT_ID = "Điền MSSV của bạn"
+PROJECT_TITLE = "Lọc bình luận độc hại và quảng cáo rác cho Fanpage lớn"
+STUDENT_NAME = "Đặng Tấn Phát"
+STUDENT_ID = "22T1020307"
 
 REMOTE_URLS = {
     "train": "https://raw.githubusercontent.com/tarudesu/ViCTSD/main/ViCTSD_train.csv",

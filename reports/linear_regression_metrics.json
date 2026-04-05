@@ -1,0 +1,35 @@
+{
+  "accuracy": 0.874,
+  "precision_toxic": 0.4215686274509804,
+  "recall_toxic": 0.39090909090909093,
+  "f1_toxic": 0.4056603773584906,
+  "classification_report": {
+    "clean": {
+      "precision": 0.9253897550111359,
+      "recall": 0.9337078651685393,
+      "f1-score": 0.9295302013422819,
+      "support": 890.0
+    },
+    "toxic": {
+      "precision": 0.4215686274509804,
+      "recall": 0.39090909090909093,
+      "f1-score": 0.4056603773584906,
+      "support": 110.0
+    },
+    "accuracy": 0.874,
+    "macro avg": {
+      "precision": 0.6734791912310581,
+      "recall": 0.6623084780388151,
+      "f1-score": 0.6675952893503863,
+      "support": 1000.0
+    },
+    "weighted avg": {
+      "precision": 0.8699694309795187,
+      "recall": 0.874,
+      "f1-score": 0.8719045207040649,
+      "support": 1000.0
+    }
+  },
+  "threshold": 0.5,
+  "model_name": "Linear Regression"
+}

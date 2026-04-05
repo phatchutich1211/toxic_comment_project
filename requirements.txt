@@ -4,7 +4,3 @@ numpy
 matplotlib
 scikit-learn
 joblib
-transformers
-torch
-sentencepiece
-safetensors

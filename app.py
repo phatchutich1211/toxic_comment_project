@@ -171,68 +171,32 @@ def _patch_logreg_compat(model):
 
 
 @st.cache_resource(show_spinner=False)
-def load_logreg_model():
-    path = MODELS_DIR / "logreg_toxic_pipeline.joblib"
+def load_linear_regression_model():
+    path = MODELS_DIR / "linear_regression_toxic_pipeline.joblib"
     if path.exists():
         model = joblib.load(path)
         return _patch_logreg_compat(model)
     return None
 
 
-@st.cache_resource(show_spinner=False)
-def load_phobert_model():
-    model_dir = MODELS_DIR / "phobert_toxic_model"
-    if not model_dir.exists():
-        return None, None, None
-
-    import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=False)
-    model = AutoModelForSequenceClassification.from_pretrained(model_dir)
-    model.to(device)
-    model.eval()
-    return tokenizer, model, device
-
-
-def predict_logreg(text: str) -> Tuple[int, float]:
-    model = load_logreg_model()
+def predict_linear_regression(text: str) -> Tuple[int, float]:
+    model = load_linear_regression_model()
     if model is None:
-        raise FileNotFoundError("Chưa tìm thấy models/logreg_toxic_pipeline.joblib")
+        raise FileNotFoundError(
+            "Chưa tìm thấy models/linear_regression_toxic_pipeline.joblib"
+        )
     clean_text = normalize_text(text)
-    try:
+
+    if hasattr(model, "predict_proba"):
         proba = float(model.predict_proba([clean_text])[0][1])
-    except AttributeError:
-        model = _patch_logreg_compat(model)
-        proba = float(model.predict_proba([clean_text])[0][1])
+    else:
+        proba = float(np.clip(model.predict([clean_text])[0], 0.0, 1.0))
+
     pred = int(proba >= 0.5)
     return pred, proba
 
 
-def predict_phobert(text: str) -> Tuple[int, float]:
-    tokenizer, model, device = load_phobert_model()
-    if tokenizer is None or model is None:
-        raise FileNotFoundError("Chưa tìm thấy thư mục models/phobert_toxic_model")
-
-    import torch
-
-    encoded = tokenizer(
-        normalize_text(text),
-        truncation=True,
-        padding=True,
-        max_length=128,
-        return_tensors="pt",
-    )
-    encoded = {k: v.to(device) for k, v in encoded.items()}
-    with torch.no_grad():
-        logits = model(**encoded).logits
-        probs = torch.softmax(logits, dim=-1).cpu().numpy()[0]
-    pred = int(np.argmax(probs))
-    return pred, float(probs[1])
-
-
-def moderation_pipeline(text: str, model_name: str, toxic_threshold: float = 0.7) -> Dict[str, object]:
+def moderation_pipeline(text: str, toxic_threshold: float = 0.7) -> Dict[str, object]:
     spam_score, spam_reasons = spam_rule_score(text)
     if spam_score >= 2:
         return {
@@ -243,10 +207,7 @@ def moderation_pipeline(text: str, model_name: str, toxic_threshold: float = 0.7
             "decision": "Ẩn tự động",
         }
 
-    if model_name == "PhoBERT":
-        pred, toxic_prob = predict_phobert(text)
-    else:
-        pred, toxic_prob = predict_logreg(text)
+    pred, toxic_prob = predict_linear_regression(text)
 
     if toxic_prob >= 0.85:
         final_label = "toxic"
@@ -406,19 +367,13 @@ def page_inference():
     st.title("Triển khai mô hình")
     st.write("Trang này cho phép nhập bình luận đơn hoặc tải lên CSV để dự đoán hàng loạt.")
 
-    available_logreg = (MODELS_DIR / "logreg_toxic_pipeline.joblib").exists()
-    available_phobert = (MODELS_DIR / "phobert_toxic_model").exists()
-
-    model_options = []
-    if available_logreg:
-        model_options.append("Logistic Regression")
-    if available_phobert:
-        model_options.append("PhoBERT")
-    if not model_options:
-        model_options = ["Logistic Regression"]
+    available_linear_regression = any(
+        path.exists() for path in (MODELS_DIR / "linear_regression_toxic_pipeline.joblib",)
+    )
+    if not available_linear_regression:
         st.warning("Chưa tìm thấy model trong thư mục models/. Hãy chạy notebook trước để sinh model.")
 
-    model_name = st.selectbox("Chọn mô hình", model_options)
+    st.caption("Mô hình đang dùng: Linear Regression")
     toxic_threshold = st.slider("Ngưỡng toxic để chuyển kiểm duyệt", min_value=0.50, max_value=0.95, value=0.70, step=0.01)
 
     default_text = "đúng là lũ mất dạy"
@@ -428,7 +383,7 @@ def page_inference():
     with col1:
         if st.button("Dự đoán bình luận", use_container_width=True):
             try:
-                result = moderation_pipeline(text, model_name=model_name, toxic_threshold=toxic_threshold)
+                result = moderation_pipeline(text, toxic_threshold=toxic_threshold)
 
                 if result["final_label"] == "spam":
                     st.error("Kết quả: SPAM / QUẢNG CÁO RÁC")
@@ -463,7 +418,7 @@ def page_inference():
         outputs = []
         for c in batch_df["comment"].astype(str).tolist():
             try:
-                result = moderation_pipeline(c, model_name=model_name, toxic_threshold=toxic_threshold)
+                result = moderation_pipeline(c, toxic_threshold=toxic_threshold)
                 outputs.append({
                     "comment": c,
                     "final_label": result["final_label"],
@@ -489,18 +444,23 @@ def page_evaluation():
     st.title("Đánh giá & Hiệu năng")
     st.write("Trang này hiển thị các chỉ số, confusion matrix và phân tích lỗi.")
 
-    metric_files = []
-    if (REPORTS_DIR / "logreg_metrics.json").exists():
-        metric_files.append(("Logistic Regression", "logreg_metrics.json", "logreg_predictions.csv", "logreg_confusion_matrix.png"))
-    if (REPORTS_DIR / "phobert_metrics.json").exists():
-        metric_files.append(("PhoBERT", "phobert_metrics.json", "phobert_predictions.csv", "phobert_confusion_matrix.png"))
+    metric_candidates = [
+        ("Linear Regression", "linear_regression_metrics.json", "linear_regression_predictions.csv", "linear_regression_confusion_matrix.png"),
+    ]
+    item = next(
+        (
+            candidate
+            for candidate in metric_candidates
+            if (REPORTS_DIR / candidate[1]).exists()
+        ),
+        None,
+    )
 
-    if not metric_files:
+    if item is None:
         st.warning("Chưa có file đánh giá trong thư mục reports/. Hãy chạy notebook để tạo metrics và confusion matrix.")
         return
 
-    model_label = st.selectbox("Chọn mô hình để xem đánh giá", [x[0] for x in metric_files])
-    item = next(x for x in metric_files if x[0] == model_label)
+    model_label = item[0]
     metrics = load_metrics_json(item[1])
     preds = load_predictions_csv(item[2])
     image_path = REPORTS_DIR / item[3]
@@ -536,7 +496,7 @@ def page_evaluation():
 
             st.write(
                 "Mô hình thường sai ở các trường hợp mỉa mai, nói giảm nói tránh, hoặc bình luận toxic nhưng không dùng từ tục rõ ràng. "
-                "Đây là lý do nên giữ rule-based cho spam và cân nhắc dùng PhoBERT cho phần toxic khó."
+                "Vì vậy vẫn nên giữ rule-based cho spam và cân nhắc mở rộng dữ liệu với các mẫu toxic khó."
             )
 
             st.markdown("""
@@ -544,7 +504,7 @@ def page_evaluation():
 
 **1. Bình luận mang tính mỉa mai hoặc ẩn ý**
 - Ví dụ: câu không chứa từ tục rõ ràng nhưng vẫn mang ý công kích.
-- Đây là nhóm mà Logistic Regression dễ bỏ sót vì mô hình chủ yếu dựa vào từ khóa.
+- Đây là nhóm mà Linear Regression dễ bỏ sót vì mô hình chủ yếu dựa vào từ khóa.
 
 **2. Bình luận có từ nhạy cảm nhưng ngữ cảnh không độc hại**
 - Một số comment chứa từ mạnh nhưng mục đích là trích dẫn, giải thích hoặc phản biện.
@@ -556,19 +516,19 @@ def page_evaluation():
 
 **4. Bình luận dài hoặc ngữ cảnh phức tạp**
 - Các câu dài, có nhiều vế hoặc sắc thái mỉa mai thường khó với mô hình tuyến tính.
-- PhoBERT có xu hướng xử lý tốt hơn nhưng vẫn có thể sai nếu dữ liệu huấn luyện chưa đủ đa dạng.
+- Với một mô hình tuyến tính duy nhất, các trường hợp này thường cần bổ sung đặc trưng hoặc dữ liệu huấn luyện đa dạng hơn.
 
 ### ⚠️ Nguyên nhân chính
 - Dữ liệu toxic ít hơn clean nên bài toán bị lệch lớp.
-- Logistic Regression không hiểu ngữ cảnh sâu.
+- Linear Regression không hiểu ngữ cảnh sâu.
 - Spam thực tế biến đổi linh hoạt và không phải lúc nào cũng có mẫu cố định.
 
 ### 🚀 Hướng cải thiện
 - Bổ sung thêm dữ liệu toxic khó như mỉa mai, châm biếm, nói giảm nói tránh.
 - Thu thập thêm dữ liệu spam tiếng Việt chuyên biệt.
-- Ưu tiên PhoBERT cho các trường hợp cần hiểu ngữ cảnh.
+- Tối ưu thêm đặc trưng TF-IDF, n-gram hoặc threshold dự đoán cho Linear Regression.
 - Tối ưu lại ngưỡng dự đoán để cân bằng precision và recall.
-- Giữ kiến trúc hybrid: rule-based + mô hình học máy + mô hình ngữ cảnh.
+- Giữ kiến trúc hybrid: rule-based + mô hình học máy.
 
 ### 📌 Kết luận
 Hệ thống hoạt động tốt với các bình luận rõ ràng, nhưng vẫn còn hạn chế với:
@@ -596,8 +556,14 @@ def main():
         page = st.radio("Chọn trang", ["1. Giới thiệu & EDA", "2. Triển khai mô hình", "3. Đánh giá & Hiệu năng"])
         st.caption("Ứng dụng đáp ứng yêu cầu tối thiểu 3 trang, có cache, EDA, triển khai và đánh giá.")
         st.write("**Tình trạng model**")
-        st.write("Logistic Regression:", "Có" if (MODELS_DIR / "logreg_toxic_pipeline.joblib").exists() else "Chưa có")
-        st.write("PhoBERT:", "Có" if (MODELS_DIR / "phobert_toxic_model").exists() else "Chưa có")
+        st.write(
+            "Linear Regression:",
+            "Có"
+            if any(
+                path.exists() for path in (MODELS_DIR / "linear_regression_toxic_pipeline.joblib",)
+            )
+            else "Chưa có",
+        )
 
     if page.startswith("1"):
         page_eda(train_df, valid_df, test_df)
